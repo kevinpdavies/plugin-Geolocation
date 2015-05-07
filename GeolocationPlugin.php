@@ -160,8 +160,6 @@ class GeolocationPlugin extends Omeka_Plugin_AbstractPlugin
         queue_css_file('geolocation-marker');
         queue_js_url("//maps.google.com/maps/api/js?sensor=false");
         queue_js_file('map');
-        queue_js_file('vars');
-        queue_js_file('wms');
     }
 
     public function hookPublicHead($args)
