@@ -4,6 +4,7 @@ class GeolocationPlugin extends Omeka_Plugin_AbstractPlugin
 {
     const GOOGLE_MAPS_API_VERSION = '3.x';
     const DEFAULT_LOCATIONS_PER_PAGE = 10;
+    const DCMI_BOX_NAMESPACE = 'http://dublincore.org/documents/2006/04/10/dcmi-box/';
 
     protected $_hooks = array(
         'install',
@@ -159,6 +160,8 @@ class GeolocationPlugin extends Omeka_Plugin_AbstractPlugin
         queue_css_file('geolocation-marker');
         queue_js_url("//maps.google.com/maps/api/js?sensor=false");
         queue_js_file('map');
+        queue_js_file('vars');
+        queue_js_file('wms');
     }
 
     public function hookPublicHead($args)
@@ -170,31 +173,64 @@ class GeolocationPlugin extends Omeka_Plugin_AbstractPlugin
 
     public function hookAfterSaveItem($args)
     {
-        if (!($post = $args['post'])) {
-            return;
-        }
-
         $item = $args['record'];
-        // If we don't have the geolocation form on the page, don't do anything!
-        if (!isset($post['geolocation'])) {
-            return;
-        }
-
+        
         // Find the location object for the item
         $location = $this->_db->getTable('Location')->findLocationByItem($item, true);
+        
+        // Loop through spatial coverage looking for dcmiBox
+        $elementTexts = metadata($item, array('Dublin Core', 'Spatial Coverage'), 'all');
+        foreach ($elementTexts as $element) {
+            try {
+                $xml = new SimpleXMLElement($element);
+                $dcmiBox = $xml->children(self::DCMI_BOX_NAMESPACE);
+                // If elementText is not a dcmiBox then skip
+                if (empty($dcmiBox)) {
+                    continue;
+                }
+                $dcmiPost['latitude'] =
+                    (floatval($dcmiBox->northlimit) +
+                    floatval($dcmiBox->southlimit)) / 2;
+                $dcmiPost['longitude'] =
+                    (floatval($dcmiBox->eastlimit) +
+                    floatval($dcmiBox->westlimit)) / 2;
+                $dcmiPost['zoom_level'] = 3; # TODO Should be default for plugin
+                $dcmiPost['map_type'] = 'roadmap';
+                $dcmiPost['address'] = '';
+                break;
+            } catch (Exception $e) {
+                debug($e->getMessage());
+            }
+        }
 
+        // If we don't have the geolocation form on the page or a dcmiBox
+        // then don't do anything!
+        if (!isset($post['geolocation']) and !isset($dcmiPost)) {
+            return;
+        }
+        
+        // Get the geolocation post if it is available
+        if (isset($post['geolocation'])) {
+            $geolocationPost = $post['geolocation'];
+        }
+        
+        // If the geolocationPost is empty, then use the dcmiBox
+        if (empty($geolocationPost) and isset($dcmiBox)) {
+            $geolocationPost = $dcmiPost;
+        }
+        
         // If we have filled out info for the geolocation, then submit to the db
-        $geolocationPost = $post['geolocation'];
+        // and update the metadata
         if (!empty($geolocationPost)
             && $geolocationPost['latitude'] != ''
-            && $geolocationPost['longitude'] != ''
-        ) {
+            && $geolocationPost['longitude'] != '') {
             if (!$location) {
                 $location = new Location;
                 $location->item_id = $item->id;
             }
             $location->setPostData($geolocationPost);
             $location->save();
+            // TODO Update dcmiBox
         } else {
             // If the form is empty, then we want to delete whatever location is
             // currently stored
@@ -202,7 +238,7 @@ class GeolocationPlugin extends Omeka_Plugin_AbstractPlugin
                 $location->delete();
             }
         }
-    }
+     }
 
     public function hookAdminItemsShowSidebar($args)
     {
